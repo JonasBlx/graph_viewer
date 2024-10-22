@@ -1,22 +1,28 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from typing import List
 import random
-from random_color import random_color
+from randomcolor import RandomColor
 from pyclustering.gcolor.dsatur import dsatur
 from fastapi.middleware.cors import CORSMiddleware
+import logging
+
+# Configurer le logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
 # Ajout du middleware CORS pour permettre les requêtes depuis le frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Vous pouvez spécifier les origines autorisées
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Définition des modèles
 class Node(BaseModel):
     id: int
     name: str
@@ -32,14 +38,31 @@ class Graph(BaseModel):
     nodes: List[Node]
     links: List[Link]
 
+# Fonction pour calculer la matrice d'adjacence
+def compute_adj_mat(graph: Graph):
+    res = []
+    for n in graph.nodes:
+        tmp = []
+        for m in graph.nodes:
+            ii = len([l for l in graph.links if l.source == n.id and l.target == m.id])
+            oo = len([l for l in graph.links if l.target == n.id and l.source == m.id])
+            tmp.append(ii + oo)
+        res.append(tmp)
+    return res
+
+# Route pour générer un graphe aléatoire
 @app.get("/random", response_model=Graph)
-def generate_random_graph(number_of_nodes: int, probability_connection: float):
+def generate_random_graph(
+    number_of_nodes: int = Query(..., gt=0),
+    probability_connection: float = Query(..., ge=0.0, le=1.0)
+):
+    rand_color = RandomColor()
     nodes = []
     for i in range(number_of_nodes):
         node = Node(
             id=i,
             name=f"Node {i}",
-            color=random_color()
+            color=rand_color.generate()[0]  # Génère une couleur aléatoire
         )
         nodes.append(node)
     
@@ -61,25 +84,26 @@ def generate_random_graph(number_of_nodes: int, probability_connection: float):
     )
     return graph
 
+# Route pour colorer un graphe en utilisant l'algorithme DSATUR
 @app.post("/graph/color/dsatur", response_model=Graph)
-def color_graph(graph: Graph):
-    # Création de la matrice d'adjacence
-    num_nodes = len(graph.nodes)
-    adjacency_matrix = [[0]*num_nodes for _ in range(num_nodes)]
-    for link in graph.links:
-        adjacency_matrix[link.source][link.target] = 1
-        adjacency_matrix[link.target][link.source] = 1  # Graphe non orienté
+def color_graph(graph: Graph) -> Graph:
+    logger.info("Coloration du graphe en cours...")
+
+    # Calcul de la matrice d'adjacence
+    adj_mat = compute_adj_mat(graph)
 
     # Application de l'algorithme DSATUR
-    dsatur_instance = dsatur(adjacency_matrix)
-    dsatur_instance.process()
-    node_colors = dsatur_instance.get_colors()
+    d = dsatur(adj_mat)
+    d.process()
+    colors = d.get_colors()
 
-    # Mise à jour des couleurs des noeuds
-    color_map = {}
-    for idx, color_idx in enumerate(node_colors):
-        if color_idx not in color_map:
-            color_map[color_idx] = random_color()
-        graph.nodes[idx].color = color_map[color_idx]
+    # Générer un nombre limité de couleurs en fonction du nombre de classes de couleurs
+    num_colors = max(colors) + 1
+    rand_color = RandomColor()
+    colors_array = rand_color.generate(count=num_colors)
+
+    # Mise à jour des couleurs des nœuds avec les classes de couleurs
+    for n in graph.nodes:
+        n.color = colors_array[colors[n.id]]
 
     return graph
