@@ -1,0 +1,3 @@
+backend/__pycache__/
+backend/graph_viewer_venv/
+frontend/graph-viewer/node_modules/
